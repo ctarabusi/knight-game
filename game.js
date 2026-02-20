@@ -179,6 +179,7 @@ function updateCamera() {
 // ─── Input ────────────────────────────────────────────────────────────────────
 const keys = {};
 window.addEventListener('keydown', e => {
+  GameAudio.init(); // resume / start AudioContext on first user gesture
   keys[e.key] = true;
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
   if ((e.key === 'z' || e.key === 'Z' || e.key === ' ') && !e.repeat) {
@@ -193,6 +194,7 @@ window.addEventListener('keyup', e => { keys[e.key] = false; });
 function tryAttack() {
   if (!player.attacking && player.attackCooldown <= 0) {
     player.attacking = true; player.attackTimer = 0; player.attackHit = new Set();
+    GameAudio.playSwordSwing();
   }
 }
 
@@ -237,7 +239,8 @@ function updateGoblins(dt) {
         if (player.invincible <= 0) {
           player.hearts = Math.max(0, player.hearts-1);
           player.invincible = PLAYER_INVINCIBLE;
-          if (player.hearts === 0) gameState = 'dead';
+          GameAudio.playPlayerHit();
+          if (player.hearts === 0) { gameState = 'dead'; GameAudio.playGameOver(); }
         }
       }
     } else { if (g.attackCooldown > 0) g.attackCooldown -= dt; }
@@ -302,7 +305,8 @@ function updateTrolls(dt) {
         if (player.invincible <= 0) {
           player.hearts = Math.max(0, player.hearts-1);
           player.invincible = PLAYER_INVINCIBLE;
-          if (player.hearts === 0) gameState = 'dead';
+          GameAudio.playPlayerHit();
+          if (player.hearts === 0) { gameState = 'dead'; GameAudio.playGameOver(); }
         }
       }
     } else { if (t.attackCooldown > 0) t.attackCooldown -= dt; }
@@ -333,7 +337,7 @@ function updateCoins(dt) {
   for (let i = coins.length-1; i >= 0; i--) {
     const c = coins[i]; c.age += dt*0.003;
     const ddx = player.x+player.w/2 - c.x, ddy = player.y+player.h/2 - c.y;
-    if (Math.sqrt(ddx*ddx+ddy*ddy) < COIN_PICKUP_DIST) { player.coins++; coins.splice(i,1); }
+    if (Math.sqrt(ddx*ddx+ddy*ddy) < COIN_PICKUP_DIST) { player.coins++; coins.splice(i,1); GameAudio.playCoinPickup(); }
   }
 }
 
@@ -364,11 +368,13 @@ function killGoblin(g) {
   g.alive=false; g.dying=true; g.deathTimer=DEATH_DUR; g.hitFlash=120; killCount++;
   spawnDeathParticles(g.x,g.y,['#cc2222','#aa1111','#ff5544','#882200','#ff8833'],10,2.5,3.5);
   spawnCoin(g.x, g.y);
+  GameAudio.playGoblinDeath();
 }
 
 function killTroll(t) {
   t.alive=false; t.dying=true; t.deathTimer=DEATH_DUR*1.5; t.hitFlash=200; killCount++;
   spawnDeathParticles(t.x,t.y,['#5a8a40','#3a6a28','#7aaa58','#2a4a18','#88cc66'],20,3.5,5);
+  GameAudio.playTrollDeath();
   // Drops 3 coins in a triangle pattern
   for (let i = 0; i < 3; i++) {
     const a = (Math.PI*2*i)/3 - Math.PI/2;
@@ -396,12 +402,14 @@ function checkAttackHits() {
     if (!g.alive||g.dying||player.attackHit.has(g)) continue;
     if (g.x+9>ar.x&&g.x-9<ar.x+ar.w&&g.y+9>ar.y&&g.y-9<ar.y+ar.h) {
       g.hitFlash=120; killGoblin(g); player.attackHit.add(g);
+      GameAudio.playHit(false);
     }
   }
   for (const t of trolls) {
     if (!t.alive||t.dying||player.attackHit.has(t)) continue;
     if (t.x+14>ar.x&&t.x-14<ar.x+ar.w&&t.y+14>ar.y&&t.y-14<ar.y+ar.h) {
       t.hp--; t.hitFlash=200; player.attackHit.add(t);
+      GameAudio.playHit(true);
       if (t.hp <= 0) killTroll(t);
     }
   }
@@ -874,6 +882,7 @@ function restartGame() {
   killCount=0; coins.length=0; particles.length=0;
   spawnGoblins(); spawnTrolls();
   gameState='playing';
+  GameAudio.fadeMusicIn();
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
