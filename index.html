@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Knight's Field</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d1b2a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: 'Courier New', monospace;
+      overflow: hidden;
+    }
+    h1 {
+      color: #e8d5a3;
+      font-size: 18px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+      text-shadow: 0 0 10px rgba(232, 213, 163, 0.5);
+    }
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border: 3px solid #4a3728;
+      box-shadow: 0 0 40px rgba(0,0,0,0.9), inset 0 0 20px rgba(0,0,0,0.2);
+    }
+  </style>
+</head>
+<body>
+  <h1>Knight's Field</h1>
+  <canvas id="game"></canvas>
+  <script src="game.js"></script>
+</body>
+</html>
