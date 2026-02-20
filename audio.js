@@ -361,6 +361,32 @@ const GameAudio = (() => {
     });
   }
 
+  function playHeal() {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    // Warm ascending arpeggio: C4 – E4 – G4 – C5
+    [261.6, 329.6, 392.0, 523.2].forEach((freq, i) => {
+      const osc  = ctx.createOscillator(); osc.type = 'sine';
+      osc.frequency.value = freq;
+      const gain = ctx.createGain();
+      const st   = t + i * 0.11;
+      gain.gain.setValueAtTime(0,    st);
+      gain.gain.linearRampToValueAtTime(0.32, st + 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.001, st + 0.55);
+      osc.connect(gain); gain.connect(sfxBus);
+      osc.start(st); osc.stop(st + 0.6);
+      // Soft harmonic layer
+      const osc2 = ctx.createOscillator(); osc2.type = 'triangle';
+      osc2.frequency.value = freq * 2;
+      const g2 = ctx.createGain();
+      g2.gain.setValueAtTime(0,    st);
+      g2.gain.linearRampToValueAtTime(0.1, st + 0.06);
+      g2.gain.exponentialRampToValueAtTime(0.001, st + 0.35);
+      osc2.connect(g2); g2.connect(sfxBus);
+      osc2.start(st); osc2.stop(st + 0.4);
+    });
+  }
+
   return {
     init,
     fadeMusicIn,
@@ -371,6 +397,7 @@ const GameAudio = (() => {
     playPlayerHit,
     playCoinPickup,
     playGameOver,
+    playHeal,
   };
 
 })();

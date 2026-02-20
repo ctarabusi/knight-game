@@ -24,10 +24,18 @@ const GOBLIN_ATK_CD    = 1600;
 const TROLL_ATK_CD     = 2400;
 const PLAYER_INVINCIBLE = 1400;
 const COIN_PICKUP_DIST  = 20;
+const CAMPFIRE_HEAL_TIME = 2600;   // ms standing near fire to gain 1 heart
+const CAMPFIRE_COOLDOWN  = 16000;  // ms before campfire can heal again
+const CAMPFIRE_RANGE     = 38;
+const HOUSE_ROOF_OVERHANG = 14;    // px the roof extends above the tile area
+
+// Village bounds (in tiles)
+const VX = 4, VY = 4, VW = 15, VH = 15;
 
 // Tile IDs
 const T_GRASS  = 0, T_GRASS2 = 1, T_GRASS3 = 2, T_FLOWER = 3;
 const T_TREE   = 4, T_ROCK   = 5, T_WATER  = 6, T_SAND   = 7, T_PATH = 8;
+const T_WALL   = 9;  // invisible solid tile used for house footprints
 
 // ─── Game state ───────────────────────────────────────────────────────────────
 let gameState = 'playing';
@@ -72,7 +80,8 @@ function generateMap() {
 
 function isSolid(tx, ty) {
   if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return true;
-  return map[ty][tx] === T_TREE || map[ty][tx] === T_ROCK || map[ty][tx] === T_WATER;
+  const t = map[ty][tx];
+  return t === T_TREE || t === T_ROCK || t === T_WATER || t === T_WALL;
 }
 
 // ─── Tile cache ───────────────────────────────────────────────────────────────
@@ -150,6 +159,14 @@ function buildTile(id) {
       c.fillStyle='#ccaa70'; c.fillRect(2,2,2,2); c.fillRect(28,22,2,2);
       break;
     }
+    case T_WALL: {
+      // Invisible solid – render as plain grass so the house sprite goes on top
+      c.fillStyle = '#5c9e3a'; c.fillRect(0,0,TS,TS);
+      break;
+    }
+    default: {
+      c.fillStyle = '#5c9e3a'; c.fillRect(0,0,TS,TS);
+    }
   }
   return oc;
 }
@@ -212,7 +229,7 @@ function spawnGoblins() {
       tx = 2 + Math.floor(gr()*(MAP_W-4));
       ty = 2 + Math.floor(gr()*(MAP_H-4));
       att++;
-    } while ((isSolid(tx,ty)||(Math.abs(tx-cx)<10&&Math.abs(ty-cy)<10)) && att<200);
+    } while ((isSolid(tx,ty)||(Math.abs(tx-cx)<10&&Math.abs(ty-cy)<10)||(tx>=VX&&tx<VX+VW&&ty>=VY&&ty<VY+VH)) && att<200);
     goblins.push({
       x: tx*TS+TS/2, y: ty*TS+TS/2,
       dir: 'down', alive: true, dying: false, deathTimer: 0,
@@ -267,6 +284,14 @@ function updateGoblins(dt) {
 // ─── Trolls ───────────────────────────────────────────────────────────────────
 const trolls = [];
 
+// ─── Village & Campfires ──────────────────────────────────────────────────────
+const houseData      = [];   // { x, y, variant } – world top-left of 2×2 tile area
+const wellData       = [];   // { x, y }
+const campfires      = [];   // { x, y, cooldown, restTimer, animTimer, animFrame }
+const floatingTexts  = [];   // { x, y, text, life, vy }
+const houseCanvases  = {};
+const campfireFrames = [];
+
 function spawnTrolls() {
   trolls.length = 0;
   const cx = Math.floor(MAP_W/2), cy = Math.floor(MAP_H/2);
@@ -277,13 +302,84 @@ function spawnTrolls() {
       tx = 3 + Math.floor(tr()*(MAP_W-6));
       ty = 3 + Math.floor(tr()*(MAP_H-6));
       att++;
-    } while ((isSolid(tx,ty)||(Math.abs(tx-cx)<18&&Math.abs(ty-cy)<18)) && att<300);
+    } while ((isSolid(tx,ty)||(Math.abs(tx-cx)<18&&Math.abs(ty-cy)<18)||(tx>=VX&&tx<VX+VW&&ty>=VY&&ty<VY+VH)) && att<300);
     trolls.push({
       x: tx*TS+TS/2, y: ty*TS+TS/2,
       dir: 'down', alive: true, dying: false, deathTimer: 0,
       hp: TROLL_HP, animFrame: 0, animTimer: 0, hitFlash: 0,
       wanderAngle: tr()*Math.PI*2, wanderTimer: 0,
       attackCooldown: 2000 + tr()*2000,
+    });
+  }
+}
+
+function placeVillage() {
+  houseData.length = 0;
+  wellData.length  = 0;
+
+  // Clear village area to grass
+  for (let y = VY; y < VY+VH; y++)
+    for (let x = VX; x < VX+VW; x++)
+      map[y][x] = T_GRASS;
+
+  // Main horizontal road (2 tiles wide)
+  for (let x = VX; x < VX+VW; x++) {
+    map[VY+6][x] = T_PATH;
+    map[VY+7][x] = T_PATH;
+  }
+  // Main vertical road
+  for (let y = VY; y < VY+VH; y++) map[y][VX+7] = T_PATH;
+
+  // Connector paths: north houses → road (rows VY+3 to VY+5 = 7–9)
+  for (let y = VY+3; y <= VY+5; y++) {
+    map[y][VX+2] = T_PATH;  // to NW house south face
+    map[y][VX+9] = T_PATH;  // to NE house south face
+  }
+  // Connector paths: south houses → road (row VY+8 = 12, gap between road y=11 and house y=13)
+  map[VY+8][VX+2] = T_PATH;
+  map[VY+8][VX+9] = T_PATH;
+
+  // 4 Houses – 2×2 tile solid footprints
+  const defs = [
+    { tx: VX+1, ty: VY+1, variant: 0 },  // NW – red roof
+    { tx: VX+9, ty: VY+1, variant: 1 },  // NE – slate roof
+    { tx: VX+1, ty: VY+9, variant: 2 },  // SW – green roof
+    { tx: VX+9, ty: VY+9, variant: 0 },  // SE – red roof
+  ];
+  for (const h of defs) {
+    for (let dy = 0; dy < 2; dy++)
+      for (let dx = 0; dx < 2; dx++)
+        map[h.ty+dy][h.tx+dx] = T_WALL;
+    houseData.push({ x: h.tx*TS, y: h.ty*TS, variant: h.variant });
+  }
+
+  // Well (decorative, not solid) at road intersection
+  wellData.push({ x: (VX+7)*TS + TS/2, y: (VY+6)*TS + TS/2 });
+
+  // Extend road a few tiles south of village
+  for (let y = VY+VH; y < VY+VH+6; y++)
+    if (map[y] && !isSolid(VX+7, y)) map[y][VX+7] = T_PATH;
+}
+
+function spawnCampfires() {
+  campfires.length = 0;
+  const spots = [
+    { tx: VX+VW+3, ty: VY+6 },  // east of village, near road level
+    { tx: 44,       ty: 44  },  // far south-east
+  ];
+  for (const s of spots) {
+    // Clear trees/rocks in a small area around the fire
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = s.tx+dx, ny = s.ty+dy;
+        if (map[ny] && nx > 0 && nx < MAP_W-1 && ny > 0 && ny < MAP_H-1) {
+          if (map[ny][nx] === T_TREE || map[ny][nx] === T_ROCK)
+            map[ny][nx] = T_GRASS;
+        }
+      }
+    campfires.push({
+      x: s.tx*TS + TS/2,  y: s.ty*TS + TS/2,
+      cooldown: 0,  restTimer: 0,  animTimer: 0,  animFrame: 0,
     });
   }
 }
@@ -338,6 +434,40 @@ function updateCoins(dt) {
     const c = coins[i]; c.age += dt*0.003;
     const ddx = player.x+player.w/2 - c.x, ddy = player.y+player.h/2 - c.y;
     if (Math.sqrt(ddx*ddx+ddy*ddy) < COIN_PICKUP_DIST) { player.coins++; coins.splice(i,1); GameAudio.playCoinPickup(); }
+  }
+}
+
+function updateCampfires(dt) {
+  for (const cf of campfires) {
+    cf.animTimer += dt;
+    if (cf.animTimer >= 180) { cf.animTimer -= 180; cf.animFrame = (cf.animFrame+1) % 4; }
+    if (cf.cooldown > 0) { cf.cooldown = Math.max(0, cf.cooldown-dt); continue; }
+
+    const ddx = player.x + player.w/2 - cf.x;
+    const ddy = player.y + player.h/2 - cf.y;
+    const dist = Math.sqrt(ddx*ddx + ddy*ddy);
+
+    if (dist < CAMPFIRE_RANGE && player.hearts < player.maxHearts) {
+      cf.restTimer = Math.min(CAMPFIRE_HEAL_TIME, cf.restTimer + dt);
+      if (cf.restTimer >= CAMPFIRE_HEAL_TIME) {
+        player.hearts = Math.min(player.maxHearts, player.hearts + 1);
+        cf.cooldown   = CAMPFIRE_COOLDOWN;
+        cf.restTimer  = 0;
+        GameAudio.playHeal();
+        floatingTexts.push({ x: player.x+player.w/2, y: player.y-10, text: '+♥', life: 1.0, vy: -0.45 });
+      }
+    } else {
+      cf.restTimer = Math.max(0, cf.restTimer - dt * 0.5);
+    }
+  }
+}
+
+function updateFloatingTexts(dt) {
+  for (let i = floatingTexts.length-1; i >= 0; i--) {
+    const ft = floatingTexts[i];
+    ft.y   += ft.vy;
+    ft.life -= dt * 0.00085;
+    if (ft.life <= 0) floatingTexts.splice(i, 1);
   }
 }
 
@@ -446,7 +576,8 @@ function update(dt) {
     if (player.animTimer>=ANIM_RATE) { player.animTimer-=ANIM_RATE; player.animFrame=(player.animFrame+1)%4; }
   } else { player.animFrame=0; player.animTimer=0; }
 
-  updateGoblins(dt); updateTrolls(dt); updateCoins(dt); updateParticles(dt);
+  updateGoblins(dt); updateTrolls(dt); updateCoins(dt);
+  updateCampfires(dt); updateFloatingTexts(dt); updateParticles(dt);
 }
 
 function canMove(px,py,mg) {
@@ -736,6 +867,183 @@ function drawHeart(x, y, full) {
   if (full) { ctx.fillStyle='#ff7777'; ctx.fillRect(x+1,y+1,2,1); ctx.fillRect(x+5,y+1,1,1); }
 }
 
+// ─── House / Campfire / Well sprites ─────────────────────────────────────────
+function buildHouseCanvas(variant) {
+  if (houseCanvases[variant]) return houseCanvases[variant];
+  const W = 64, H = HOUSE_ROOF_OVERHANG + 2*TS; // 14 + 64 = 78
+  const oc = document.createElement('canvas'); oc.width=W; oc.height=H;
+  const c  = oc.getContext('2d');
+
+  const schemes = [
+    // 0 – red/terracotta roof, sandy walls
+    { rTop:'#6a1212', rMid:'#9a2222', rShin:'#7a1a1a', eave:'#c07848',
+      wMain:'#d4b880', wLight:'#e8cc96', wShadow:'#b89860',
+      door:'#7a4820', doorDk:'#4a2808', win:'#3a506a' },
+    // 1 – dark slate roof, off-white walls
+    { rTop:'#182434', rMid:'#263c56', rShin:'#1c3048', eave:'#7080a0',
+      wMain:'#ddd8cc', wLight:'#eee8da', wShadow:'#bdb8ac',
+      door:'#5a3820', doorDk:'#3a2010', win:'#334466' },
+    // 2 – green moss roof, warm timber walls
+    { rTop:'#1a3018', rMid:'#2a4a28', rShin:'#1e3a1e', eave:'#608050',
+      wMain:'#a87848', wLight:'#c89060', wShadow:'#886030',
+      door:'#4a2810', doorDk:'#2a1808', win:'#3a2818' },
+  ];
+  const s = schemes[variant % 3];
+
+  const wallY = HOUSE_ROOF_OVERHANG + 34; // 48 – where walls start in canvas coords
+
+  // Drop shadow
+  c.fillStyle = 'rgba(0,0,0,0.2)'; c.fillRect(4, H-2, W-4, 5);
+
+  // === WALLS ===
+  c.fillStyle = s.wShadow;  c.fillRect(0, wallY, W, H-wallY);
+  c.fillStyle = s.wMain;    c.fillRect(2, wallY+2, W-4, H-wallY-2);
+  c.fillStyle = s.wLight;   c.fillRect(2, wallY+2, W-4, 4);
+  // Horizontal stone/plank lines
+  c.fillStyle = 'rgba(0,0,0,0.07)';
+  for (let ly = wallY+9; ly < H-2; ly += 8) c.fillRect(2, ly, W-4, 1);
+
+  // Door
+  c.fillStyle = s.doorDk; c.fillRect(26, wallY+10, 12, H-wallY-10);
+  c.fillStyle = s.door;   c.fillRect(27, wallY+11, 10, H-wallY-11);
+  c.fillStyle = 'rgba(0,0,0,0.15)'; c.fillRect(28, wallY+13, 4, 8); c.fillRect(33, wallY+13, 4, 8);
+  c.fillStyle = 'rgba(255,255,255,0.1)'; c.fillRect(28, wallY+12, 2, 5);
+  c.fillStyle = '#ffcc44'; c.fillRect(35, wallY+22, 2, 2); // doorknob
+  // Door arch
+  c.fillStyle = s.wShadow; c.fillRect(24, wallY+8, 16, 5);
+  c.fillStyle = s.wMain;   c.fillRect(25, wallY+9, 14, 4);
+
+  // Windows
+  [[5, wallY+5], [43, wallY+5]].forEach(([wx, wy]) => {
+    c.fillStyle = s.win; c.fillRect(wx, wy, 14, 14);
+    [[wx+1,wy+1,6,6,'#aaddff'],[wx+7,wy+1,6,6,'#88ccee'],
+     [wx+1,wy+7,6,6,'#99ddff'],[wx+7,wy+7,6,6,'#77bbdd']].forEach(([px,py,pw,ph,col])=>{
+       c.fillStyle=col; c.fillRect(px,py,pw,ph);
+    });
+    c.fillStyle = s.win; c.fillRect(wx, wy+6, 14, 2); c.fillRect(wx+6, wy, 2, 14);
+    c.fillStyle = 'rgba(255,255,255,0.45)'; c.fillRect(wx+1, wy+1, 3, 2);
+  });
+
+  // === ROOF ===
+  const eaveY = HOUSE_ROOF_OVERHANG + 30; // 44
+  c.fillStyle = s.rMid;  c.fillRect(-2, HOUSE_ROOF_OVERHANG, W+4, eaveY-HOUSE_ROOF_OVERHANG);
+  c.fillStyle = s.rTop;  c.fillRect(-2, 0, W+4, HOUSE_ROOF_OVERHANG+2);
+  // Shingles
+  c.fillStyle = s.rShin;
+  for (let ry = HOUSE_ROOF_OVERHANG+2; ry < eaveY-2; ry += 8)
+    for (let rx = -2; rx < W+2; rx += 14) c.fillRect(rx+1, ry, 10, 6);
+  // Ridge (east-west peak, top-down view)
+  c.fillStyle = s.rTop; c.fillRect(28, 0, 8, eaveY);
+  c.fillStyle = 'rgba(0,0,0,0.22)';      c.fillRect(28, 0, 3, eaveY);
+  c.fillStyle = 'rgba(255,255,255,0.1)'; c.fillRect(33, 0, 3, eaveY);
+  // Top cap
+  c.fillStyle = s.rTop; c.fillRect(-2, 0, W+4, 5);
+  // Eave
+  c.fillStyle = s.eave; c.fillRect(-4, eaveY-2, W+8, 8);
+  c.fillStyle = 'rgba(0,0,0,0.25)'; c.fillRect(-4, eaveY+4, W+8, 3);
+
+  // Chimney (variants 0 and 2)
+  if (variant !== 1) {
+    const cx = variant === 0 ? 47 : 8;
+    c.fillStyle = '#888'; c.fillRect(cx,   -10, 8, 20);
+    c.fillStyle = '#aaa'; c.fillRect(cx,   -10, 8,  4);
+    c.fillStyle = '#555'; c.fillRect(cx-2,  -6, 12, 4);
+    c.fillStyle = 'rgba(200,200,200,0.25)'; c.fillRect(cx+1, -14, 4, 6);
+  }
+
+  houseCanvases[variant] = oc;
+  return oc;
+}
+
+function buildCampfireFrames() {
+  if (campfireFrames.length > 0) return;
+  for (let f = 0; f < 4; f++) {
+    const oc = document.createElement('canvas'); oc.width=28; oc.height=32;
+    const c  = oc.getContext('2d');
+
+    // Glow
+    const grd = c.createRadialGradient(14, 24, 2, 14, 24, 14);
+    grd.addColorStop(0, 'rgba(255,140,0,0.42)');
+    grd.addColorStop(1, 'rgba(255,60,0,0)');
+    c.fillStyle = grd; c.fillRect(0, 10, 28, 22);
+
+    // Logs
+    c.fillStyle = '#8a5a28'; c.fillRect(5, 22, 18, 4);
+    c.fillRect(9, 15, 4, 11); c.fillRect(15, 15, 4, 11);
+    c.fillStyle = '#6a4018'; c.fillRect(6, 23, 16, 2); c.fillRect(10, 16, 2, 8);
+
+    // Embers
+    c.fillStyle = '#ff3300'; c.fillRect(10, 20, 8, 5);
+    c.fillStyle = '#ff8800'; c.fillRect(12, 21, 4, 3);
+
+    // Stones
+    [[2,26,6,4],[20,26,6,4],[1,20,5,8],[22,20,5,8],[6,28,16,3]].forEach(([x,y,w,h]) => {
+      c.fillStyle = '#6a6a6a'; c.fillRect(x,y,w,h);
+      c.fillStyle = '#8a8a8a'; c.fillRect(x,y,w,1);
+    });
+
+    // Animated fire
+    const fh = [10, 14, 8, 12][f];
+    const sw = [-1,  1,-2,  0][f];
+    c.fillStyle = '#ff5500'; c.fillRect(9+sw,  20-fh,    10, fh);
+    c.fillStyle = '#ffaa00'; c.fillRect(11+sw, 20-fh+2,   6, fh-2);
+    c.fillStyle = '#ffee44'; c.fillRect(12+sw, 20-fh+4,   4, Math.max(1,fh-6));
+    c.fillStyle = '#fffff0'; c.fillRect(13,    20-fh+6,   2,  2);
+
+    campfireFrames[f] = oc;
+  }
+}
+
+function drawCampfire(sx, sy, animFrame, restTimer) {
+  if (campfireFrames.length === 0) buildCampfireFrames();
+  ctx.drawImage(campfireFrames[animFrame], sx - 14, sy - 22);
+
+  if (restTimer > 0 && restTimer < CAMPFIRE_HEAL_TIME) {
+    const pct = restTimer / CAMPFIRE_HEAL_TIME;
+    ctx.save();
+    ctx.strokeStyle = '#ffcc44'; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(sx, sy - 30, 10, -Math.PI*0.5, -Math.PI*0.5 + Math.PI*2*pct);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawWell(sx, sy) {
+  ctx.save();
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath(); ctx.ellipse(sx, sy+16, 10, 4, 0, 0, Math.PI*2); ctx.fill();
+
+  // Stone base
+  ctx.fillStyle = '#6a6a7a'; ctx.fillRect(sx-11, sy-2, 22, 16);
+  ctx.fillStyle = '#8a8a9a'; ctx.fillRect(sx-9,  sy-4, 18, 16);
+  ctx.fillStyle = '#9a9aaa'; ctx.fillRect(sx-9,  sy-4, 18,  4);
+
+  // Water
+  ctx.fillStyle = '#1f5a99'; ctx.fillRect(sx-7, sy-2, 14, 10);
+  ctx.fillStyle = '#3388cc'; ctx.fillRect(sx-7, sy-2, 14,  4);
+  ctx.fillStyle = '#66aaee'; ctx.fillRect(sx-5, sy-1,  5,  2);
+
+  // Posts
+  ctx.fillStyle = '#7a5028'; ctx.fillRect(sx-13, sy-18, 5, 24);
+  ctx.fillStyle = '#7a5028'; ctx.fillRect(sx+8,  sy-18, 5, 24);
+  ctx.fillStyle = '#5a3818'; ctx.fillRect(sx-12, sy-18, 2, 24);
+  ctx.fillStyle = '#5a3818'; ctx.fillRect(sx+8,  sy-18, 2, 24);
+
+  // Crossbeam
+  ctx.fillStyle = '#6a4018'; ctx.fillRect(sx-13, sy-18, 26, 5);
+  ctx.fillStyle = '#8a5828'; ctx.fillRect(sx-12, sy-17, 24,  3);
+
+  // Rope + bucket
+  ctx.fillStyle = '#ccaa44'; ctx.fillRect(sx-1, sy-13,  2, 12);
+  ctx.fillStyle = '#8a5028'; ctx.fillRect(sx-4, sy-3,   8,  7);
+  ctx.fillStyle = '#6a3a18'; ctx.fillRect(sx-4, sy-5,   8,  3);
+  ctx.fillStyle = '#aa6a30'; ctx.fillRect(sx-3, sy-3,   8,  2);
+
+  ctx.restore();
+}
+
 // ─── Render ───────────────────────────────────────────────────────────────────
 function render() {
   ctx.fillStyle='#1a3a0a'; ctx.fillRect(0,0,canvas.width,canvas.height);
@@ -754,8 +1062,14 @@ function render() {
     drawCoin(c.x-cam.x, c.y-cam.y-4, bob);
   }
 
-  // Y-sorted entities
+  // Y-sorted entities (houses, well, campfires, enemies, player)
   const entities=[];
+  for (const h of houseData)
+    entities.push({ sortY: h.y + 2*TS, type: 'house', h });
+  for (const w of wellData)
+    entities.push({ sortY: w.y + 20,   type: 'well',  w });
+  for (const cf of campfires)
+    entities.push({ sortY: cf.y + 12,  type: 'campfire', cf });
   for (const g of goblins) {
     if (g.dying)       entities.push({sortY:g.y,type:'goblin',g,alpha:Math.max(0,g.deathTimer/DEATH_DUR),flash:g.hitFlash});
     else if (g.alive)  entities.push({sortY:g.y,type:'goblin',g,alpha:1,flash:g.hitFlash});
@@ -770,7 +1084,13 @@ function render() {
   const showPlayer = player.invincible<=0 || Math.floor(player.invincible/90)%2===0;
 
   for (const e of entities) {
-    if (e.type==='goblin') {
+    if (e.type==='house') {
+      ctx.drawImage(buildHouseCanvas(e.h.variant), e.h.x-cam.x, e.h.y-cam.y-HOUSE_ROOF_OVERHANG);
+    } else if (e.type==='well') {
+      drawWell(e.w.x-cam.x, e.w.y-cam.y);
+    } else if (e.type==='campfire') {
+      drawCampfire(e.cf.x-cam.x, e.cf.y-cam.y, e.cf.animFrame, e.cf.restTimer);
+    } else if (e.type==='goblin') {
       drawGoblin(e.g.x-cam.x-9, e.g.y-cam.y-14, e.g.dir, e.g.animFrame, e.alpha, e.flash);
     } else if (e.type==='troll') {
       drawTroll(e.t.x-cam.x-15, e.t.y-cam.y-26, e.t.dir, e.t.animFrame, e.alpha, e.flash, e.t.hp);
@@ -781,6 +1101,19 @@ function render() {
         player.attacking, player.attacking?player.attackTimer/ATTACK_DURATION:0
       );
     }
+  }
+
+  // Floating texts (world-space)
+  for (const ft of floatingTexts) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, ft.life);
+    ctx.fillStyle   = '#ff6666';
+    ctx.font        = 'bold 15px "Courier New"';
+    ctx.textAlign   = 'center';
+    ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+    ctx.fillText(ft.text, ft.x - cam.x, ft.y - cam.y);
+    ctx.textAlign = 'left'; ctx.shadowBlur = 0;
+    ctx.restore();
   }
 
   // Particles
@@ -879,8 +1212,8 @@ function restartGame() {
     attacking:false, attackTimer:0, attackCooldown:0, attackHit:new Set(),
     hearts:3, invincible:0, coins:0,
   });
-  killCount=0; coins.length=0; particles.length=0;
-  spawnGoblins(); spawnTrolls();
+  killCount=0; coins.length=0; particles.length=0; floatingTexts.length=0;
+  spawnGoblins(); spawnTrolls(); spawnCampfires();
   gameState='playing';
   GameAudio.fadeMusicIn();
 }
@@ -892,7 +1225,8 @@ function minimapColor(tile) {
     case T_GRASS3: return '#507830'; case T_FLOWER: return '#88cc44';
     case T_TREE:   return '#1e4a10'; case T_ROCK:   return '#888888';
     case T_WATER:  return '#3366aa'; case T_SAND:   return '#c8a850';
-    case T_PATH:   return '#9a7840'; default:        return '#000000';
+    case T_PATH:   return '#9a7840'; case T_WALL:    return '#9a7840';
+    default:        return '#000000';
   }
 }
 
@@ -914,6 +1248,9 @@ function loop(ts){
 }
 
 generateMap();
+placeVillage();
 spawnGoblins();
 spawnTrolls();
+spawnCampfires();
+buildCampfireFrames();
 requestAnimationFrame(loop);
