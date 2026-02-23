@@ -361,6 +361,27 @@ const GameAudio = (() => {
     });
   }
 
+  function playFireBreath() {
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    // Deep roar: low sawtooth + white noise filtered to sound like fire
+    const src = ctx.createBufferSource(); src.buffer = makeNoiseBuffer(0.5);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(800, t); lp.frequency.linearRampToValueAtTime(3200, t+0.18);
+    lp.frequency.linearRampToValueAtTime(400, t+0.5); lp.Q.value = 1.2;
+    const g1 = ctx.createGain(); g1.gain.setValueAtTime(0, t);
+    g1.gain.linearRampToValueAtTime(0.55, t+0.06);
+    g1.gain.linearRampToValueAtTime(0.3, t+0.4);
+    g1.gain.linearRampToValueAtTime(0, t+0.55);
+    src.connect(lp); lp.connect(g1); g1.connect(sfxBus);
+    src.start(t); src.stop(t+0.56);
+    // Rumble tone
+    const osc = ctx.createOscillator(); osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(80, t); osc.frequency.exponentialRampToValueAtTime(40, t+0.5);
+    const g2 = ctx.createGain(); g2.gain.setValueAtTime(0.18, t); g2.gain.linearRampToValueAtTime(0, t+0.5);
+    osc.connect(g2); g2.connect(sfxBus); osc.start(t); osc.stop(t+0.52);
+  }
+
   function playHeal() {
     if (!ctx) return;
     const t = ctx.currentTime;
@@ -398,6 +419,7 @@ const GameAudio = (() => {
     playCoinPickup,
     playGameOver,
     playHeal,
+    playFireBreath,
   };
 
 })();

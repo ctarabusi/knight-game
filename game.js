@@ -11,8 +11,8 @@ const MAP_W            = 60;
 const MAP_H            = 60;
 const SPEED            = 1.8;
 const ANIM_RATE        = 140;
-const ATTACK_DURATION  = 380;
-const ATTACK_COOLDOWN  = 480;
+const ATTACK_DURATION  = 280;
+const ATTACK_COOLDOWN  = 300;
 const GOBLIN_COUNT     = 18;
 const GOBLIN_SPEED     = 0.55;
 const TROLL_COUNT      = 3;
@@ -28,9 +28,47 @@ const CAMPFIRE_HEAL_TIME = 2600;   // ms standing near fire to gain 1 heart
 const CAMPFIRE_COOLDOWN  = 16000;  // ms before campfire can heal again
 const CAMPFIRE_RANGE     = 38;
 const HOUSE_ROOF_OVERHANG = 14;    // px the roof extends above the tile area
+const SHOP_INTERACT_DIST  = 40;   // px from shop door to trigger interaction
+const ARROW_SPEED         = 3.8;
+const ARROW_MAX_DIST      = 300;
 
 // Village bounds (in tiles)
 const VX = 4, VY = 4, VW = 15, VH = 15;
+
+// Cave / Dragon
+const CAVE_W         = 25;
+const CAVE_H         = 17;
+const C_FLOOR        = 0;
+const C_WALL         = 1;
+const C_LAVA         = 2;
+const CAVE_ENT_TX    = 30;   // cave entrance tile x on world map
+const CAVE_ENT_TY    = 38;   // cave entrance tile y on world map
+const DRAGON_HP_MAX  = 5;
+const DRAGON_SPEED   = 0.65;
+const DRAGON_DETECT  = 400;
+const FIREBALL_SPEED = 2.6;
+const FIREBALL_CD    = 2600;
+
+// Cave map layout  (0=floor  1=wall  2=lava)
+const CAVE_MAP = [
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  [1,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,1],
+  [1,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,1],
+  [1,0,0,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,0,0,1],
+  [1,0,0,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,0,0,1],
+  [1,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,0,0,0,0,0,1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,0,0,0,0,1],
+  [1,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,0,0,0,0,1],
+  [1,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,1],
+  [1,0,0,0,0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+];
 
 // Tile IDs
 const T_GRASS  = 0, T_GRASS2 = 1, T_GRASS3 = 2, T_FLOWER = 3;
@@ -181,7 +219,7 @@ const player = {
   w: 20, h: 28,
   dir: 'down', moving: false, animFrame: 0, animTimer: 0,
   attacking: false, attackTimer: 0, attackCooldown: 0, attackHit: new Set(),
-  hearts: 3, maxHearts: 3, invincible: 0, coins: 0,
+  hearts: 3, maxHearts: 3, invincible: 0, coins: 0, hasBow: false,
 };
 
 // ─── Camera ───────────────────────────────────────────────────────────────────
@@ -202,8 +240,23 @@ window.addEventListener('keydown', e => {
   if ((e.key === 'z' || e.key === 'Z' || e.key === ' ') && !e.repeat) {
     e.preventDefault();
     if (gameState === 'dead') { restartGame(); return; }
-    tryAttack();
+    if (!shopOpen) tryAttack();
   }
+  if ((e.key === 'e' || e.key === 'E') && !e.repeat) {
+    e.preventDefault();
+    if (gameState === 'dead') return;
+    if (shopOpen) {
+      if (!player.hasBow && player.coins >= 5) {
+        player.coins -= 5; player.hasBow = true; shopOpen = false;
+        GameAudio.playCoinPickup();
+        floatingTexts.push({ x: player.x+player.w/2, y: player.y-10, text: '🏹 Arco!', life: 1.4, vy: -0.5 });
+      } else { shopOpen = false; }
+    } else { tryOpenShop(); }
+  }
+  if ((e.key === 'x' || e.key === 'X') && !e.repeat && player.hasBow && gameState !== 'dead' && !shopOpen) {
+    shootArrow();
+  }
+  if (e.key === 'Escape') { shopOpen = false; }
   if (e.key === 'Enter' && gameState === 'dead') restartGame();
 });
 window.addEventListener('keyup', e => { keys[e.key] = false; });
@@ -213,6 +266,128 @@ function tryAttack() {
     player.attacking = true; player.attackTimer = 0; player.attackHit = new Set();
     GameAudio.playSwordSwing();
   }
+}
+
+// ─── Shop ─────────────────────────────────────────────────────────────────────
+function tryOpenShop() {
+  if (gameScene !== 'world') return;
+  for (const h of houseData) {
+    if (!h.isShop) continue;
+    // Porta al centro della facciata sud della casa
+    const doorX = h.x + TS;
+    const doorY = h.y + 2*TS;
+    const px = player.x + player.w/2;
+    const py = player.y + player.h/2;
+    const dist = Math.sqrt((px-doorX)**2 + (py-doorY)**2);
+    if (dist < SHOP_INTERACT_DIST) { shopOpen = true; return; }
+  }
+}
+
+function drawShopUI() {
+  if (!shopOpen) return;
+  const pw = 300, ph = 190;
+  const bx = canvas.width/2 - pw/2, by = canvas.height/2 - ph/2;
+  // Sfondo
+  ctx.fillStyle = 'rgba(0,0,0,0.78)'; roundRect(ctx, bx-4, by-4, pw+8, ph+8, 10); ctx.fill();
+  ctx.fillStyle = '#c8a050'; roundRect(ctx, bx, by, pw, ph, 8); ctx.fill();
+  ctx.fillStyle = '#6a3a10'; roundRect(ctx, bx+4, by+4, pw-8, ph-8, 6); ctx.fill();
+  // Titolo
+  ctx.fillStyle = '#ffe898'; ctx.font = 'bold 16px "Courier New"'; ctx.textAlign = 'center';
+  ctx.fillText('⚒  N E G O Z I O  ⚒', canvas.width/2, by + 32);
+  // Separatore
+  ctx.fillStyle = '#c8a050'; ctx.fillRect(bx+14, by+40, pw-28, 2);
+  // Oggetto: arco
+  ctx.fillStyle = '#ffdd88'; ctx.font = 'bold 14px "Courier New"';
+  ctx.fillText('🏹  Arco', canvas.width/2, by + 72);
+  ctx.fillStyle = '#e8d5a3'; ctx.font = '12px "Courier New"';
+  ctx.fillText("Prezzo: 5 monete d'oro", canvas.width/2, by + 95);
+  ctx.fillText('Spara frecce con il tasto X', canvas.width/2, by + 112);
+  // Stato acquisto
+  if (player.hasBow) {
+    ctx.fillStyle = '#88ff88'; ctx.font = 'bold 13px "Courier New"';
+    ctx.fillText('✓ Già acquistato!', canvas.width/2, by + 145);
+    ctx.fillStyle = '#aaaaaa'; ctx.font = '11px "Courier New"';
+    ctx.fillText('[E / Esc] Chiudi', canvas.width/2, by + 168);
+  } else if (player.coins >= 5) {
+    ctx.fillStyle = '#88ff88'; ctx.font = 'bold 13px "Courier New"';
+    ctx.fillText('[E] Compra  ·  [Esc] Chiudi', canvas.width/2, by + 145);
+    ctx.fillStyle = '#f0e060'; ctx.font = '11px "Courier New"';
+    ctx.fillText(`Monete: ${player.coins} / 5`, canvas.width/2, by + 168);
+  } else {
+    ctx.fillStyle = '#ff7766'; ctx.font = 'bold 13px "Courier New"';
+    ctx.fillText(`Monete insufficienti (${player.coins}/5)`, canvas.width/2, by + 145);
+    ctx.fillStyle = '#aaaaaa'; ctx.font = '11px "Courier New"';
+    ctx.fillText('[E / Esc] Chiudi', canvas.width/2, by + 168);
+  }
+  ctx.textAlign = 'left';
+}
+
+// ─── Frecce ───────────────────────────────────────────────────────────────────
+function shootArrow() {
+  const cx = player.x + player.w/2, cy = player.y + player.h/2;
+  let vx = 0, vy = 0;
+  if      (player.dir === 'right') vx =  ARROW_SPEED;
+  else if (player.dir === 'left')  vx = -ARROW_SPEED;
+  else if (player.dir === 'up')    vy = -ARROW_SPEED;
+  else                             vy =  ARROW_SPEED;
+  arrows.push({ x: cx, y: cy, vx, vy, dist: 0, dir: player.dir });
+}
+
+function updateArrows(dt) {
+  for (let i = arrows.length - 1; i >= 0; i--) {
+    const a = arrows[i];
+    a.x += a.vx; a.y += a.vy;
+    a.dist += Math.sqrt(a.vx*a.vx + a.vy*a.vy);
+    const solidCheck = gameScene === 'cave' ? isCaveSolid : isSolid;
+    if (solidCheck(Math.floor(a.x/TS), Math.floor(a.y/TS)) || a.dist > ARROW_MAX_DIST) {
+      arrows.splice(i, 1); continue;
+    }
+    let hit = false;
+    for (const g of goblins) {
+      if (!g.alive || g.dying) continue;
+      if (Math.abs(a.x - g.x) < 12 && Math.abs(a.y - g.y) < 12) {
+        killGoblin(g); GameAudio.playHit(false); hit = true; break;
+      }
+    }
+    if (!hit) for (const t of trolls) {
+      if (!t.alive || t.dying) continue;
+      if (Math.abs(a.x - t.x) < 18 && Math.abs(a.y - t.y) < 18) {
+        t.hp--; t.hitFlash = 200; GameAudio.playHit(true);
+        if (t.hp <= 0) killTroll(t);
+        hit = true; break;
+      }
+    }
+    if (!hit && dragon && dragon.alive && !dragon.dying) {
+      if (a.x > dragon.x && a.x < dragon.x+60 && a.y > dragon.y && a.y < dragon.y+56) {
+        dragon.hp--; dragon.hitFlash = 300; GameAudio.playHit(true);
+        spawnDeathParticles(dragon.x+30, dragon.y+28, ['#ff2200','#ff6600','#ffaa00'], 8, 4, 5);
+        if (dragon.hp <= 0) {
+          dragon.dying = true; dragon.alive = false; dragon.deathTimer = 2500;
+          spawnDeathParticles(dragon.x+30, dragon.y+24, ['#ff1100','#ff4400','#ff8800','#ffcc00'], 24, 6, 6);
+          GameAudio.playTrollDeath(); killCount += 5;
+        }
+        hit = true;
+      }
+    }
+    if (hit) arrows.splice(i, 1);
+  }
+}
+
+function drawArrow(sx, sy, dir) {
+  ctx.save();
+  ctx.fillStyle = '#c8a060';
+  if (dir === 'left' || dir === 'right') {
+    ctx.fillRect(sx - 10, sy - 1, 20, 3);
+    ctx.fillStyle = '#aaaaaa';
+    if (dir === 'right') ctx.fillRect(sx + 8,  sy - 3, 5, 7);
+    else                 ctx.fillRect(sx - 13, sy - 3, 5, 7);
+  } else {
+    ctx.fillRect(sx - 1, sy - 10, 3, 20);
+    ctx.fillStyle = '#aaaaaa';
+    if (dir === 'down') ctx.fillRect(sx - 3, sy + 8,  7, 5);
+    else                ctx.fillRect(sx - 3, sy - 13, 7, 5);
+  }
+  ctx.restore();
 }
 
 // ─── Goblins ─────────────────────────────────────────────────────────────────
@@ -289,8 +464,22 @@ const houseData      = [];   // { x, y, variant } – world top-left of 2×2 til
 const wellData       = [];   // { x, y }
 const campfires      = [];   // { x, y, cooldown, restTimer, animTimer, animFrame }
 const floatingTexts  = [];   // { x, y, text, life, vy }
+const arrows         = [];   // { x, y, vx, vy, dist, dir }
+let   shopOpen       = false;
 const houseCanvases  = {};
 const campfireFrames = [];
+
+// ─── Cave / Dragon state ──────────────────────────────────────────────────────
+let   gameScene       = 'world';  // 'world' | 'cave'
+let   transitionAlpha = 0;        // 0-1 fade
+let   transitionDir   = 0;        // 1=fading to black, -1=fading back, 0=idle
+let   sceneAfterFade  = null;
+let   dragonDefeated  = false;
+const caveMap         = [];
+const fireballs       = [];
+const caveTileCache   = {};
+let   dragon          = null;
+let   caveAnimTick    = 0;
 
 function spawnTrolls() {
   trolls.length = 0;
@@ -342,7 +531,7 @@ function placeVillage() {
   // 4 Houses – 2×2 tile solid footprints
   const defs = [
     { tx: VX+1, ty: VY+1, variant: 0 },  // NW – red roof
-    { tx: VX+9, ty: VY+1, variant: 1 },  // NE – slate roof
+    { tx: VX+9, ty: VY+1, variant: 1, isShop: true },  // NE – negozio (tetto ardesia)
     { tx: VX+1, ty: VY+9, variant: 2 },  // SW – green roof
     { tx: VX+9, ty: VY+9, variant: 0 },  // SE – red roof
   ];
@@ -350,7 +539,7 @@ function placeVillage() {
     for (let dy = 0; dy < 2; dy++)
       for (let dx = 0; dx < 2; dx++)
         map[h.ty+dy][h.tx+dx] = T_WALL;
-    houseData.push({ x: h.tx*TS, y: h.ty*TS, variant: h.variant });
+    houseData.push({ x: h.tx*TS, y: h.ty*TS, variant: h.variant, isShop: !!h.isShop });
   }
 
   // Well (decorative, not solid) at road intersection
@@ -381,6 +570,229 @@ function spawnCampfires() {
       x: s.tx*TS + TS/2,  y: s.ty*TS + TS/2,
       cooldown: 0,  restTimer: 0,  animTimer: 0,  animFrame: 0,
     });
+  }
+}
+
+// ─── Cave setup ───────────────────────────────────────────────────────────────
+function placeCaveEntrance() {
+  // Clear a comfortable approach area around the entrance
+  for (let dy = -3; dy <= 4; dy++)
+    for (let dx = -4; dx <= 4; dx++) {
+      const wy = CAVE_ENT_TY+dy, wx = CAVE_ENT_TX+dx;
+      if (wy>=1&&wy<MAP_H-1&&wx>=1&&wx<MAP_W-1) map[wy][wx] = T_GRASS;
+    }
+  // Rock pillars flanking the opening
+  for (let dy = -2; dy <= 0; dy++) {
+    map[CAVE_ENT_TY+dy][CAVE_ENT_TX-2] = T_ROCK;
+    map[CAVE_ENT_TY+dy][CAVE_ENT_TX-1] = T_ROCK;
+    map[CAVE_ENT_TY+dy][CAVE_ENT_TX+1] = T_ROCK;
+    map[CAVE_ENT_TY+dy][CAVE_ENT_TX+2] = T_ROCK;
+  }
+  map[CAVE_ENT_TY-2][CAVE_ENT_TX] = T_ROCK; // top cap
+  map[CAVE_ENT_TY  ][CAVE_ENT_TX] = T_PATH; // walkable entry tile
+  // Seed cave map from the constant template
+  for (let y=0;y<CAVE_H;y++) { caveMap[y]=[]; for (let x=0;x<CAVE_W;x++) caveMap[y][x]=CAVE_MAP[y][x]; }
+}
+
+function initCave() {
+  fireballs.length = 0;
+  caveAnimTick = 0;
+  if (!dragonDefeated) {
+    dragon = {
+      x: 11*TS, y: 3*TS,
+      hp: DRAGON_HP_MAX, dir: 'right', alive: true, dying: false, deathTimer: 0,
+      animFrame: 0, animTimer: 0, hitFlash: 0,
+      fireBreathCooldown: 3000, state: 'patrol', patrolDir: 1, patrolTimer: 2500,
+    };
+  }
+  player.x = 11*TS+8; player.y = 14*TS; player.dir = 'up';
+}
+
+function startTransition(dest) {
+  sceneAfterFade = dest; transitionDir = 1; transitionAlpha = 0;
+}
+
+function updateTransition(dt) {
+  if (transitionDir === 0) return;
+  transitionAlpha = Math.max(0, Math.min(1, transitionAlpha + dt*0.0035*transitionDir));
+  if (transitionDir === 1 && transitionAlpha >= 1) {
+    if (sceneAfterFade === 'cave') { gameScene = 'cave'; initCave(); }
+    else {
+      gameScene = 'world';
+      player.x = CAVE_ENT_TX*TS; player.y = (CAVE_ENT_TY+1)*TS; player.dir = 'down';
+    }
+    transitionDir = -1;
+  }
+  if (transitionDir === -1 && transitionAlpha <= 0) {
+    transitionAlpha = 0; transitionDir = 0; sceneAfterFade = null;
+  }
+}
+
+// ─── Cave collision helpers ───────────────────────────────────────────────────
+function isCaveSolid(tx, ty) {
+  if (tx<0||ty<0||tx>=CAVE_W||ty>=CAVE_H) return true;
+  return caveMap[ty][tx] === C_WALL;
+}
+function isCaveLava(tx, ty) {
+  if (tx<0||ty<0||tx>=CAVE_W||ty>=CAVE_H) return false;
+  return caveMap[ty][tx] === C_LAVA;
+}
+function canMoveCave(px, py, mg) {
+  return !isCaveSolid(Math.floor((px+mg)/TS),           Math.floor((py+mg)/TS)) &&
+         !isCaveSolid(Math.floor((px+player.w-mg)/TS),  Math.floor((py+mg)/TS)) &&
+         !isCaveSolid(Math.floor((px+mg)/TS),           Math.floor((py+player.h-2)/TS)) &&
+         !isCaveSolid(Math.floor((px+player.w-mg)/TS),  Math.floor((py+player.h-2)/TS));
+}
+
+// ─── Cave scene update ────────────────────────────────────────────────────────
+function updateCave(dt) {
+  if (gameState === 'dead') return;
+  if (player.invincible > 0) player.invincible = Math.max(0, player.invincible-dt);
+
+  if (player.attacking) {
+    player.attackTimer += dt;
+    checkDragonHit();
+    if (player.attackTimer >= ATTACK_DURATION) {
+      player.attacking=false; player.attackTimer=0; player.attackCooldown=ATTACK_COOLDOWN;
+    }
+  }
+  if (player.attackCooldown > 0) player.attackCooldown = Math.max(0, player.attackCooldown-dt);
+
+  let dx=0, dy=0;
+  if (keys['ArrowLeft'] ||keys['a']) { dx=-1; player.dir='left';  }
+  if (keys['ArrowRight']||keys['d']) { dx= 1; player.dir='right'; }
+  if (keys['ArrowUp']   ||keys['w']) { dy=-1; player.dir='up';    }
+  if (keys['ArrowDown'] ||keys['s']) { dy= 1; player.dir='down';  }
+  const spd = player.attacking ? SPEED*0.35 : SPEED;
+  player.moving = dx!==0||dy!==0;
+  if (player.moving) {
+    if (dx!==0&&dy!==0){dx*=0.7071;dy*=0.7071;}
+    const nx=player.x+dx*spd, ny=player.y+dy*spd, mg=3;
+    const cX=canMoveCave(nx,player.y,mg), cY=canMoveCave(player.x,ny,mg);
+    if(cX&&cY){player.x=nx;player.y=ny;}else if(cX){player.x=nx;}else if(cY){player.y=ny;}
+    player.animTimer+=dt;
+    if(player.animTimer>=ANIM_RATE){player.animTimer-=ANIM_RATE;player.animFrame=(player.animFrame+1)%4;}
+  } else { player.animFrame=0; player.animTimer=0; }
+  player.x=Math.max(TS,    Math.min((CAVE_W-2)*TS-player.w, player.x));
+  player.y=Math.max(TS/2,  Math.min((CAVE_H-2)*TS-player.h, player.y));
+
+  // Lava damage
+  const lx=Math.floor((player.x+player.w/2)/TS), ly=Math.floor((player.y+player.h-4)/TS);
+  if (isCaveLava(lx,ly) && player.invincible<=0) {
+    player.hearts--; player.invincible=PLAYER_INVINCIBLE;
+    GameAudio.playPlayerHit();
+    if (player.hearts<=0) { gameState='dead'; GameAudio.playGameOver(); }
+  }
+
+  // Exit (walk south through the bottom opening at tiles 11-12 row 15)
+  const pyT=Math.floor((player.y+player.h)/TS);
+  const pxT=Math.floor((player.x+player.w/2)/TS);
+  if (pyT>=15 && pxT>=11 && pxT<=12 && player.dir==='down' && transitionDir===0) {
+    startTransition('world');
+  }
+
+  caveAnimTick += dt;
+  updateDragon(dt);
+  updateFireballs(dt);
+  updateArrows(dt);
+  updateParticles(dt);
+  updateFloatingTexts(dt);
+  updateCoins(dt);
+}
+
+function checkDragonHit() {
+  if (!dragon||!dragon.alive||dragon.dying) return;
+  if (player.attackHit.has('dragon')) return;
+  const ar=22;
+  let ax=player.x, ay=player.y, aw=player.w, ah=ar;
+  if      (player.dir==='down') { ay=player.y+player.h; ah=ar; }
+  else if (player.dir==='up')   { ay=player.y-ar;       ah=ar; }
+  else if (player.dir==='left') { ax=player.x-ar;       aw=ar; ah=player.h; }
+  else                          { ax=player.x+player.w; aw=ar; ah=player.h; }
+  if (ax<dragon.x+60&&ax+aw>dragon.x&&ay<dragon.y+56&&ay+ah>dragon.y) {
+    player.attackHit.add('dragon');
+    dragon.hp--; dragon.hitFlash=300;
+    GameAudio.playHit(true);
+    spawnDeathParticles(dragon.x+30,dragon.y+28,['#ff2200','#ff6600','#ffaa00'],8,4,5);
+    if (dragon.hp<=0) {
+      dragon.dying=true; dragon.alive=false; dragon.deathTimer=2500;
+      spawnDeathParticles(dragon.x+30,dragon.y+24,['#ff1100','#ff4400','#ff8800','#ffcc00'],24,6,6);
+      GameAudio.playTrollDeath(); killCount+=5;
+    }
+  }
+}
+
+function updateDragon(dt) {
+  if (!dragon) return;
+  if (dragon.hitFlash>0) dragon.hitFlash-=dt;
+  if (dragon.dying) {
+    dragon.deathTimer-=dt;
+    if (dragon.deathTimer<=0) {
+      dragon.dying=false; dragonDefeated=true;
+      for (let i=0;i<8;i++) spawnCoin(dragon.x+20+Math.random()*20, dragon.y+20+Math.random()*16);
+    }
+    return;
+  }
+  if (!dragon.alive) return;
+  dragon.animTimer+=dt;
+  if (dragon.animTimer>=350){dragon.animTimer=0;dragon.animFrame=(dragon.animFrame+1)%4;}
+  if (dragon.fireBreathCooldown>0) dragon.fireBreathCooldown-=dt;
+
+  const ddx=player.x+player.w/2-(dragon.x+30);
+  const ddy=player.y+player.h/2-(dragon.y+28);
+  const dist=Math.sqrt(ddx*ddx+ddy*ddy);
+
+  if (dragon.state==='patrol') {
+    dragon.patrolTimer-=dt;
+    if (dragon.patrolTimer<=0){dragon.patrolDir*=-1;dragon.patrolTimer=2000+Math.random()*2000;}
+    const nx=dragon.x+dragon.patrolDir*DRAGON_SPEED*0.5;
+    const tx=Math.floor((nx+(dragon.patrolDir>0?62:0))/TS), ty=Math.floor((dragon.y+28)/TS);
+    if (!isCaveSolid(tx,ty)) dragon.x=nx; else {dragon.patrolDir*=-1;dragon.patrolTimer=1000;}
+    dragon.dir=dragon.patrolDir>0?'right':'left';
+    if (dist<DRAGON_DETECT) dragon.state='chase';
+  } else {
+    const spd=dragon.hp<=3?DRAGON_SPEED*1.6:DRAGON_SPEED;
+    if (dist>8) {
+      const mx=(ddx/dist)*spd, my=(ddy/dist)*spd;
+      if(!isCaveSolid(Math.floor((dragon.x+(mx>0?64:0))/TS),Math.floor((dragon.y+28)/TS))) dragon.x+=mx;
+      if(!isCaveSolid(Math.floor((dragon.x+30)/TS),Math.floor((dragon.y+(my>0?58:0))/TS))) dragon.y+=my;
+      dragon.x=Math.max(TS,Math.min((CAVE_W-3)*TS-60,dragon.x));
+      dragon.y=Math.max(TS,Math.min((CAVE_H-4)*TS-56,dragon.y));
+      if(Math.abs(ddx)>Math.abs(ddy)) dragon.dir=ddx>0?'right':'left';
+      else dragon.dir=ddy>0?'down':'up';
+    }
+    if (dist<320&&dragon.fireBreathCooldown<=0) {
+      const angle=Math.atan2(ddy,ddx);
+      const n=dragon.hp<=3?5:3;
+      for (let i=0;i<n;i++) {
+        const a=angle+(i-(n-1)/2)*(Math.PI/7);
+        fireballs.push({x:dragon.x+30,y:dragon.y+40,vx:Math.cos(a)*FIREBALL_SPEED,vy:Math.sin(a)*FIREBALL_SPEED,life:3000});
+      }
+      dragon.fireBreathCooldown=dragon.hp<=3?FIREBALL_CD*0.55:FIREBALL_CD;
+      if (GameAudio.playFireBreath) GameAudio.playFireBreath();
+    }
+    if (dist>DRAGON_DETECT*1.5) dragon.state='patrol';
+  }
+}
+
+function updateFireballs(dt) {
+  for (let i=fireballs.length-1;i>=0;i--) {
+    const fb=fireballs[i];
+    fb.x+=fb.vx; fb.y+=fb.vy; fb.life-=dt;
+    if (isCaveSolid(Math.floor(fb.x/TS),Math.floor(fb.y/TS))||fb.life<=0) {
+      spawnDeathParticles(fb.x,fb.y,['#ff4400','#ff8800','#ffee00'],4,2,3);
+      fireballs.splice(i,1); continue;
+    }
+    if (player.invincible<=0) {
+      const dx2=player.x+player.w/2-fb.x, dy2=player.y+player.h/2-fb.y;
+      if (dx2*dx2+dy2*dy2<16*16) {
+        player.hearts--; player.invincible=PLAYER_INVINCIBLE;
+        spawnDeathParticles(fb.x,fb.y,['#ff4400','#ff8800'],5,2,3);
+        fireballs.splice(i,1);
+        if(player.hearts<=0){gameState='dead';GameAudio.playGameOver();}else GameAudio.playPlayerHit();
+        continue;
+      }
+    }
   }
 }
 
@@ -547,7 +959,18 @@ function checkAttackHits() {
 
 // ─── Update ───────────────────────────────────────────────────────────────────
 function update(dt) {
+  updateTransition(dt);
+  if (transitionDir !== 0 && transitionAlpha > 0.85) return; // freeze at fade peak
+  if (gameScene === 'cave') { updateCave(dt); return; }
+
   if (gameState === 'dead') return;
+
+  // Negozio aperto: blocca movimento e combattimento
+  if (shopOpen) {
+    updateFloatingTexts(dt);
+    return;
+  }
+
   if (player.invincible > 0) player.invincible = Math.max(0, player.invincible-dt);
 
   if (player.attacking) {
@@ -576,8 +999,18 @@ function update(dt) {
     if (player.animTimer>=ANIM_RATE) { player.animTimer-=ANIM_RATE; player.animFrame=(player.animFrame+1)%4; }
   } else { player.animFrame=0; player.animTimer=0; }
 
+  // Cave entrance trigger: walk north into the opening
+  if (transitionDir===0) {
+    const entX=(CAVE_ENT_TX)*TS+TS/2, entY=(CAVE_ENT_TY-1)*TS+TS/2;
+    const px=player.x+player.w/2, py=player.y+player.h/2;
+    if (Math.abs(px-entX)<TS*0.75 && Math.abs(py-entY)<TS*0.75 && player.dir==='up') {
+      startTransition('cave');
+    }
+  }
+
   updateGoblins(dt); updateTrolls(dt); updateCoins(dt);
   updateCampfires(dt); updateFloatingTexts(dt); updateParticles(dt);
+  updateArrows(dt);
 }
 
 function canMove(px,py,mg) {
@@ -867,6 +1300,275 @@ function drawHeart(x, y, full) {
   if (full) { ctx.fillStyle='#ff7777'; ctx.fillRect(x+1,y+1,2,1); ctx.fillRect(x+5,y+1,1,1); }
 }
 
+// ─── Cave tile rendering ──────────────────────────────────────────────────────
+function buildCaveTile(id, phase) {
+  const key=`ct_${id}_${phase}`;
+  if (caveTileCache[key]) return caveTileCache[key];
+  const oc=document.createElement('canvas'); oc.width=oc.height=TS;
+  const c=oc.getContext('2d');
+  if (id===C_FLOOR) {
+    c.fillStyle='#1a1a24'; c.fillRect(0,0,TS,TS);
+    c.fillStyle='#222232';
+    [[2,4,4,2],[14,18,4,2],[24,8,3,2],[6,26,4,2],[28,14,3,2]].forEach(([x,y,w,h])=>c.fillRect(x,y,w,h));
+    c.fillStyle='#2a2a3e'; [[8,12],[22,6],[4,22]].forEach(([x,y])=>c.fillRect(x,y,2,2));
+  } else if (id===C_WALL) {
+    c.fillStyle='#221e2e'; c.fillRect(0,0,TS,TS);
+    c.fillStyle='#352a44';
+    for (let row=0;row<4;row++){const off=row%2===0?0:7;for(let col=-off;col<TS;col+=14)c.fillRect(col,row*8,11,6);}
+    c.fillStyle='#181220'; c.fillRect(0,0,TS,2); c.fillRect(0,0,2,TS);
+    c.fillStyle='#4a3a5c'; c.fillRect(4,6,8,4); c.fillRect(16,14,10,4);
+    c.fillStyle='#201828'; c.fillRect(22,2,6,4);
+  } else if (id===C_LAVA) {
+    const lc=phase%2===0
+      ?['#cc2200','#ee4400','#ff7700','#ffaa00']
+      :['#dd3300','#ff5500','#ff8800','#ffbb00'];
+    c.fillStyle=lc[0]; c.fillRect(0,0,TS,TS);
+    c.fillStyle=lc[1]; for(let y=2;y<TS;y+=8)c.fillRect(0,y,TS,5);
+    c.fillStyle=lc[2]; c.fillRect(4,4,10,6); c.fillRect(18,10,8,5); c.fillRect(6,20,12,4);
+    c.fillStyle=lc[3]; c.fillRect(6,5,5,3); c.fillRect(20,11,4,2); c.fillRect(9,21,6,2);
+    c.fillStyle='rgba(255,240,200,0.5)'; c.fillRect(7,5,2,2); c.fillRect(21,12,2,1);
+  }
+  caveTileCache[key]=oc; return oc;
+}
+function getCaveTile(id) {
+  const phase=Math.floor(caveAnimTick/500)%2;
+  return buildCaveTile(id, id===C_LAVA?phase:0);
+}
+
+// ─── Cave entrance sprite (world map) ────────────────────────────────────────
+function drawCaveEntrance(sx, sy) {
+  ctx.save();
+  // Left rock pillar
+  ctx.fillStyle='#50505e'; ctx.fillRect(sx,    sy, 32, 56);
+  ctx.fillStyle='#686878'; ctx.fillRect(sx,    sy, 32,  5);
+  ctx.fillStyle='#38384a'; ctx.fillRect(sx+28, sy,  4, 56);
+  // Right rock pillar
+  ctx.fillStyle='#50505e'; ctx.fillRect(sx+64, sy, 32, 56);
+  ctx.fillStyle='#686878'; ctx.fillRect(sx+64, sy, 32,  5);
+  ctx.fillStyle='#38384a'; ctx.fillRect(sx+64, sy,  4, 56);
+  // Top arch
+  ctx.fillStyle='#484858'; ctx.fillRect(sx, sy,     96, 22);
+  ctx.fillStyle='#686878'; ctx.fillRect(sx, sy,     96,  5);
+  ctx.fillStyle='#38384a'; ctx.fillRect(sx, sy+18,  96,  4);
+  // Dark glowing interior
+  const grd=ctx.createRadialGradient(sx+48,sy+50,4,sx+48,sy+50,44);
+  grd.addColorStop(0,'rgba(220,80,0,0.38)'); grd.addColorStop(0.45,'rgba(60,10,0,0.7)'); grd.addColorStop(1,'rgba(0,0,0,0.95)');
+  ctx.fillStyle=grd; ctx.fillRect(sx+32,sy+18,32,40);
+  // Torches
+  [[sx+8,sy+28],[sx+80,sy+28]].forEach(([tx_,ty_])=>{
+    ctx.fillStyle='#8a5028'; ctx.fillRect(tx_,ty_,4,10);
+    const gf=ctx.createRadialGradient(tx_+2,ty_-2,1,tx_+2,ty_-2,7);
+    gf.addColorStop(0,'rgba(255,220,100,0.9)'); gf.addColorStop(1,'rgba(255,80,0,0)');
+    ctx.fillStyle=gf; ctx.beginPath(); ctx.arc(tx_+2,ty_-2,7,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ffee80'; ctx.beginPath(); ctx.arc(tx_+2,ty_-2,3,0,Math.PI*2); ctx.fill();
+  });
+  // Rock texture
+  ctx.fillStyle='#38384a';
+  [[2,8],[10,16],[4,34],[20,8],[28,20],[66,10],[74,18],[68,30],[84,8],[90,22]].forEach(([rx,ry])=>ctx.fillRect(sx+rx,sy+ry,4,3));
+  // Label
+  ctx.fillStyle='rgba(0,0,0,0.55)'; roundRect(ctx,sx+14,sy+60,68,18,4); ctx.fill();
+  ctx.fillStyle='#e8d5a3'; ctx.font='10px "Courier New"'; ctx.textAlign='center';
+  ctx.fillText('Caverna',sx+48,sy+72); ctx.textAlign='left';
+  ctx.restore();
+}
+
+// ─── Dragon sprite ────────────────────────────────────────────────────────────
+function drawDragon(ox, oy, dir, frame, alpha, flash, hp) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, alpha);
+  ctx.translate(Math.round(ox), Math.round(oy));
+  const bob = frame%2===1 ? 1 : 0;
+  const fl  = flash > 0;
+  const p   = (x,y,w,h,c) => { ctx.fillStyle=fl?'#ff5555':c; ctx.fillRect(x,y+bob,w,h); };
+
+  // Drop shadow
+  ctx.fillStyle=`rgba(0,0,0,${alpha*0.3})`;
+  ctx.beginPath(); ctx.ellipse(30,62,26,7,0,0,Math.PI*2); ctx.fill();
+
+  if (dir==='right') { ctx.save(); ctx.translate(60,0); ctx.scale(-1,1); }
+
+  if (dir==='left'||dir==='right') {
+    // Tail
+    p(44,22,14,10,'#6a0808'); p(52,20, 9,6,'#7a1010'); p(57,16, 5,4,'#5a0606'); p(60,12, 3,6,'#480606');
+    // Lower wing
+    p( 8,42,40,12,'#550808'); p(10,44,36,10,'#6a0c0c');
+    p(14,42, 2,12,'#380404'); p(24,42, 2,12,'#380404'); p(34,42, 2,12,'#380404');
+    // Upper wing
+    p(10, 2,38,14,'#5a0808'); p(12, 4,34,12,'#780e0e'); p(14, 6,30,10,'#6a0c0c');
+    p(14, 4, 2,12,'#380404'); p(24, 4, 2,12,'#380404'); p(34, 4, 2,12,'#380404');
+    p(10, 0, 4, 4,'#880e0e'); p(22, 0, 4, 4,'#880e0e'); p(34, 0, 4, 4,'#880e0e');
+    // Body
+    p( 6,14,50,26,'#7a1010'); p( 8,16,48,22,'#9a1818'); p(10,18,44,18,'#b02020');
+    p(12,18, 8, 5,'#8a1414'); p(22,20, 8, 5,'#8a1414'); p(32,18, 8, 5,'#8a1414'); p(42,20, 8, 5,'#8a1414');
+    p(16,26, 8, 5,'#8a1414'); p(28,24, 8, 5,'#8a1414'); p(38,26, 8, 5,'#8a1414');
+    // Legs & claws
+    p(16,36, 8,14,'#7a0e0e'); p(14,48,12, 6,'#5a0808');
+    p(32,34, 8,14,'#7a0e0e'); p(30,46,12, 6,'#5a0808');
+    p(14,52, 3, 5,'#c8a070'); p(18,52, 3, 5,'#c8a070'); p(22,52, 3, 5,'#c8a070');
+    p(30,50, 3, 5,'#c8a070'); p(34,50, 3, 5,'#c8a070'); p(38,50, 3, 5,'#c8a070');
+    // Neck + head
+    p( 2,18,10,18,'#8a1010'); p( 4,20, 8,16,'#a01818');
+    p( 0,12,14,24,'#8a1010'); p( 0,14,14,20,'#aa2020'); p( 0,20,14,14,'#c02828');
+    p( 6,10, 4, 8,'#4a0808'); p( 9, 8, 3, 6,'#3a0606'); p( 2,12, 4, 6,'#4a0808');
+    p( 2,14, 7, 6,'#ffcc00'); p( 3,15, 5, 4,'#000000'); p( 2,14, 2, 2,'#ffffaa');
+    p( 0,22, 3, 2,'#180000');
+    p( 0,24, 2, 5,'#e8d8b0'); p( 3,24, 2, 4,'#e8d8b0'); p( 6,24, 2, 5,'#e8d8b0'); p( 9,24, 2, 4,'#e8d8b0');
+    // Fire-glow at mouth when ready to breathe
+    if (dragon && dragon.fireBreathCooldown < 500 && dragon.state==='chase') {
+      ctx.save(); ctx.globalAlpha=(1-dragon.fireBreathCooldown/500)*0.65;
+      const gf=ctx.createRadialGradient(0,28,2,0,28,14);
+      gf.addColorStop(0,'rgba(255,200,0,1)'); gf.addColorStop(1,'rgba(255,50,0,0)');
+      ctx.fillStyle=gf; ctx.beginPath(); ctx.arc(0,28,14,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  } else if (dir==='down') {
+    // Wings spread wide
+    p(-10, 6,24,36,'#550808'); p(-6, 4,18,34,'#780e0e');
+    p( 56, 6,24,36,'#550808'); p(58, 4,18,34,'#780e0e');
+    p(-10,10, 2,24,'#340404'); p(-10,20, 2,16,'#340404');
+    p( 68,10, 2,24,'#340404'); p( 68,20, 2,16,'#340404');
+    // Tail top
+    p(24,-6,12, 8,'#7a1010'); p(26,-10, 8, 6,'#6a0808'); p(28,-14, 4, 6,'#560606');
+    // Body
+    p(10, 2,40,44,'#7a1010'); p(12, 4,36,40,'#9a1818'); p(14, 6,32,36,'#b02020');
+    p(16, 8, 8, 5,'#8a1414'); p(26, 8, 8, 5,'#8a1414'); p(36, 8, 8, 5,'#8a1414');
+    p(20,16, 8, 5,'#8a1414'); p(30,16, 8, 5,'#8a1414');
+    p(16,24, 8, 5,'#8a1414'); p(28,24, 8, 5,'#8a1414'); p(38,24, 8, 5,'#8a1414');
+    // Arms + claws
+    p( 6,14, 8,22,'#7a0e0e'); p(46,14, 8,22,'#7a0e0e');
+    p( 4,30,12, 8,'#5a0808'); p(44,30,12, 8,'#5a0808');
+    p( 4,36, 3, 6,'#c8a070'); p( 8,36, 3, 6,'#c8a070'); p(12,36, 3, 6,'#c8a070');
+    p(44,36, 3, 6,'#c8a070'); p(48,36, 3, 6,'#c8a070'); p(52,36, 3, 6,'#c8a070');
+    // Neck + head
+    p(18,38,24, 8,'#8a1010');
+    p(14,44,32,16,'#8a1010'); p(16,46,28,14,'#aa2020'); p(14,52,32, 8,'#c02828');
+    p(14,42, 4, 8,'#4a0808'); p(16,40, 3, 4,'#3a0606');
+    p(42,42, 4, 8,'#4a0808'); p(41,40, 3, 4,'#3a0606');
+    p(16,46, 8, 6,'#ffcc00'); p(36,46, 8, 6,'#ffcc00');
+    p(18,47, 5, 4,'#000000'); p(38,47, 5, 4,'#000000');
+    p(16,46, 3, 2,'#ffffaa'); p(36,46, 3, 2,'#ffffaa');
+    p(20,54, 3, 2,'#180000'); p(37,54, 3, 2,'#180000');
+    p(16,58, 3, 6,'#e8d8b0'); p(20,58, 3, 6,'#e8d8b0'); p(24,58, 3, 6,'#e8d8b0');
+    p(28,58, 3, 6,'#e8d8b0'); p(32,58, 3, 6,'#e8d8b0'); p(36,58, 3, 6,'#e8d8b0');
+  } else {
+    // 'up' — back of dragon
+    p(24,-6,12, 8,'#7a1010'); p(26,-10, 8, 6,'#6a0808');
+    p(-10, 6,24,38,'#550808'); p(-6, 4,18,36,'#780e0e');
+    p( 56, 6,24,38,'#550808'); p(58, 4,18,36,'#780e0e');
+    p(10, 2,40,44,'#7a1010'); p(12, 4,36,40,'#9a1818'); p(14, 6,32,36,'#b02020');
+    p(14, 4, 4, 8,'#4a0808'); p(42, 4, 4, 8,'#4a0808');
+  }
+
+  if (dir==='right') ctx.restore();
+
+  // Floating HP bar
+  if (dragon && dragon.hp < DRAGON_HP_MAX && dragon.alive) {
+    const bw=60, bh=5, bx=0, by=-18;
+    ctx.fillStyle='#220000'; ctx.fillRect(bx,by-bob,bw,bh);
+    const pct=dragon.hp/DRAGON_HP_MAX;
+    ctx.fillStyle=pct>0.5?'#cc2222':pct>0.25?'#ee6622':'#ff8800';
+    ctx.fillRect(bx,by-bob,bw*pct,bh);
+    ctx.fillStyle='rgba(255,80,80,0.4)'; ctx.fillRect(bx,by-bob,bw*pct,2);
+  }
+  ctx.restore();
+}
+
+function drawFireball(sx, sy) {
+  ctx.save();
+  const grd=ctx.createRadialGradient(sx,sy,1,sx,sy,12);
+  grd.addColorStop(0,'rgba(255,240,100,1)');
+  grd.addColorStop(0.3,'rgba(255,120,0,0.9)');
+  grd.addColorStop(1,'rgba(255,30,0,0)');
+  ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(sx,sy,12,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff8e0'; ctx.beginPath(); ctx.arc(sx,sy,3,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+// ─── Cave scene render ────────────────────────────────────────────────────────
+function renderCave() {
+  ctx.fillStyle='#0a0810'; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Tiles
+  for (let ty=0;ty<CAVE_H;ty++)
+    for (let tx=0;tx<CAVE_W;tx++)
+      ctx.drawImage(getCaveTile(caveMap[ty][tx]), tx*TS, ty*TS);
+
+  // Vignette
+  const vg=ctx.createRadialGradient(canvas.width/2,272,80,canvas.width/2,272,480);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.6)');
+  ctx.fillStyle=vg; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Exit indicator
+  ctx.save(); ctx.fillStyle='rgba(255,200,100,0.45)'; ctx.fillRect(11*TS,15*TS,2*TS,TS);
+  ctx.fillStyle='#ffcc66'; ctx.font='9px "Courier New"'; ctx.textAlign='center';
+  ctx.fillText('USCITA',11*TS+TS,15*TS+20); ctx.textAlign='left'; ctx.restore();
+
+  // Coins
+  for (const c of coins) { const bob=Math.sin(c.age+c.bobOffset)*2; drawCoin(c.x-4,c.y-4,bob); }
+
+  // Y-sorted cave entities
+  const cEnts=[];
+  if (dragon) {
+    if (dragon.dying)      cEnts.push({sortY:dragon.y+56,type:'dragon',alpha:Math.max(0,dragon.deathTimer/2500)});
+    else if (dragon.alive) cEnts.push({sortY:dragon.y+56,type:'dragon',alpha:1});
+  }
+  for (const fb of fireballs) cEnts.push({sortY:fb.y,type:'fireball',fb});
+  cEnts.push({sortY:player.y+player.h,type:'player'});
+  cEnts.sort((a,b)=>a.sortY-b.sortY);
+
+  const showPlayer=player.invincible<=0||Math.floor(player.invincible/90)%2===0;
+  for (const e of cEnts) {
+    if (e.type==='dragon') {
+      drawDragon(dragon.x,dragon.y,dragon.dir,dragon.animFrame,e.alpha,dragon.hitFlash,dragon.hp);
+    } else if (e.type==='fireball') {
+      drawFireball(e.fb.x,e.fb.y);
+    } else if (showPlayer) {
+      drawKnight(player.x-2,player.y-6,player.dir,player.animFrame,player.moving,
+        player.attacking,player.attacking?player.attackTimer/ATTACK_DURATION:0);
+    }
+  }
+
+  // Arrows (cave – no cam offset)
+  for (const a of arrows) drawArrow(a.x, a.y, a.dir);
+
+  // Particles
+  for (const p of particles) {
+    ctx.save(); ctx.globalAlpha=p.life; ctx.fillStyle=p.color;
+    ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size); ctx.restore();
+  }
+  // Floating texts
+  for (const ft of floatingTexts) {
+    ctx.save(); ctx.globalAlpha=Math.max(0,ft.life); ctx.fillStyle='#ff6666';
+    ctx.font='bold 15px "Courier New"'; ctx.textAlign='center';
+    ctx.shadowColor='#000'; ctx.shadowBlur=4;
+    ctx.fillText(ft.text,ft.x,ft.y); ctx.textAlign='left'; ctx.shadowBlur=0; ctx.restore();
+  }
+
+  // Dragon HP bar at bottom
+  if (dragon&&(dragon.alive||dragon.dying)) {
+    const bw=220,bh=14,bx=canvas.width/2-110,by=canvas.height-26;
+    ctx.fillStyle='rgba(0,0,0,0.72)'; roundRect(ctx,bx-6,by-6,bw+12,bh+12,6); ctx.fill();
+    ctx.fillStyle='#330000'; ctx.fillRect(bx,by,bw,bh);
+    const pct=Math.max(0,dragon.hp/DRAGON_HP_MAX);
+    const hpG=ctx.createLinearGradient(bx,by,bx+bw,by);
+    hpG.addColorStop(0,'#aa1a1a'); hpG.addColorStop(1,'#ff4444');
+    ctx.fillStyle=hpG; ctx.fillRect(bx,by,bw*pct,bh);
+    ctx.fillStyle='rgba(255,100,100,0.35)'; ctx.fillRect(bx,by,bw*pct,4);
+    ctx.fillStyle='#e8d5a3'; ctx.font='bold 12px "Courier New"'; ctx.textAlign='center';
+    ctx.fillText(`\u2604 DRAGO   ${dragon.hp} / ${DRAGON_HP_MAX}`,canvas.width/2,by-6);
+    ctx.textAlign='left';
+  }
+  if (dragonDefeated&&(!dragon||!dragon.alive)&&!dragon?.dying) {
+    ctx.fillStyle='rgba(0,0,0,0.55)'; roundRect(ctx,canvas.width/2-160,canvas.height/2-28,320,56,10); ctx.fill();
+    ctx.fillStyle='#ffcc44'; ctx.font='bold 14px "Courier New"'; ctx.textAlign='center';
+    ctx.fillText('Drago sconfitto! Vai a sud per uscire.',canvas.width/2,canvas.height/2+6);
+    ctx.textAlign='left';
+  }
+
+  drawHUD();
+  if (gameState==='dead') drawDeathScreen();
+}
+
 // ─── House / Campfire / Well sprites ─────────────────────────────────────────
 function buildHouseCanvas(variant) {
   if (houseCanvases[variant]) return houseCanvases[variant];
@@ -1046,6 +1748,11 @@ function drawWell(sx, sy) {
 
 // ─── Render ───────────────────────────────────────────────────────────────────
 function render() {
+  if (gameScene === 'cave') {
+    renderCave();
+    if (transitionAlpha>0){ctx.fillStyle=`rgba(0,0,0,${transitionAlpha})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
+    return;
+  }
   ctx.fillStyle='#1a3a0a'; ctx.fillRect(0,0,canvas.width,canvas.height);
 
   const startX=Math.max(0,Math.floor(cam.x/TS)), startY=Math.max(0,Math.floor(cam.y/TS));
@@ -1070,6 +1777,7 @@ function render() {
     entities.push({ sortY: w.y + 20,   type: 'well',  w });
   for (const cf of campfires)
     entities.push({ sortY: cf.y + 12,  type: 'campfire', cf });
+  entities.push({ sortY: CAVE_ENT_TY*TS, type: 'cave_entrance' });
   for (const g of goblins) {
     if (g.dying)       entities.push({sortY:g.y,type:'goblin',g,alpha:Math.max(0,g.deathTimer/DEATH_DUR),flash:g.hitFlash});
     else if (g.alive)  entities.push({sortY:g.y,type:'goblin',g,alpha:1,flash:g.hitFlash});
@@ -1084,8 +1792,20 @@ function render() {
   const showPlayer = player.invincible<=0 || Math.floor(player.invincible/90)%2===0;
 
   for (const e of entities) {
-    if (e.type==='house') {
+    if (e.type==='cave_entrance') {
+      drawCaveEntrance((CAVE_ENT_TX-1)*TS-cam.x, (CAVE_ENT_TY-1)*TS-cam.y);
+    } else if (e.type==='house') {
       ctx.drawImage(buildHouseCanvas(e.h.variant), e.h.x-cam.x, e.h.y-cam.y-HOUSE_ROOF_OVERHANG);
+      if (e.h.isShop) {
+        // Cartello del negozio sull'eave della casa
+        const sx = e.h.x - cam.x + 32, sy = e.h.y - cam.y + 30;
+        ctx.save();
+        ctx.fillStyle = '#7a4820'; ctx.fillRect(sx-22, sy, 44, 14);
+        ctx.fillStyle = '#c89050'; ctx.fillRect(sx-21, sy+1, 42, 12);
+        ctx.fillStyle = '#2a1408'; ctx.font = 'bold 8px "Courier New"'; ctx.textAlign = 'center';
+        ctx.fillText('NEGOZIO', sx, sy + 10); ctx.textAlign = 'left';
+        ctx.restore();
+      }
     } else if (e.type==='well') {
       drawWell(e.w.x-cam.x, e.w.y-cam.y);
     } else if (e.type==='campfire') {
@@ -1102,6 +1822,9 @@ function render() {
       );
     }
   }
+
+  // Frecce
+  for (const a of arrows) drawArrow(a.x - cam.x, a.y - cam.y, a.dir);
 
   // Floating texts (world-space)
   for (const ft of floatingTexts) {
@@ -1124,8 +1847,29 @@ function render() {
     ctx.restore();
   }
 
+  // Prompt [E] vicino al negozio
+  if (!shopOpen) {
+    for (const h of houseData) {
+      if (!h.isShop) continue;
+      const doorX = h.x + TS, doorY = h.y + 2*TS;
+      const px = player.x + player.w/2, py = player.y + player.h/2;
+      if (Math.sqrt((px-doorX)**2 + (py-doorY)**2) < SHOP_INTERACT_DIST) {
+        const sx = px - cam.x, sy = py - cam.y - 36;
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.65)'; roundRect(ctx, sx-38, sy-14, 76, 18, 4); ctx.fill();
+        ctx.fillStyle = '#ffe088'; ctx.font = 'bold 11px "Courier New"'; ctx.textAlign = 'center';
+        ctx.fillText('[E] Negozio', sx, sy); ctx.textAlign = 'left';
+        ctx.restore();
+      }
+    }
+  }
+
   drawHUD();
   if (gameState==='dead') drawDeathScreen();
+  drawShopUI();
+
+  // Transition overlay (world scene)
+  if (transitionAlpha>0){ctx.fillStyle=`rgba(0,0,0,${transitionAlpha})`;ctx.fillRect(0,0,canvas.width,canvas.height);}
 }
 
 // ─── HUD ──────────────────────────────────────────────────────────────────────
@@ -1151,11 +1895,19 @@ function drawHUD() {
   ctx.textAlign='left';
 
   // Controls
+  // Arco nel HUD
+  if (player.hasBow) {
+    ctx.fillStyle='rgba(0,0,0,0.5)';
+    roundRect(ctx,10,78,94,28,6); ctx.fill();
+    ctx.fillStyle='#ffdd88'; ctx.font='14px "Courier New"';
+    ctx.fillText('🏹 X: freccia',18,97);
+  }
+
   ctx.fillStyle='rgba(0,0,0,0.5)';
-  roundRect(ctx,10,canvas.height-52,240,42,6); ctx.fill();
+  roundRect(ctx,10,canvas.height-52,260,42,6); ctx.fill();
   ctx.fillStyle='#e8d5a3'; ctx.font='12px "Courier New"';
   ctx.fillText('Move: Arrow Keys / WASD',20,canvas.height-32);
-  ctx.fillText('Attack: Z or Space',20,canvas.height-14);
+  ctx.fillText('Attack: Z/Space' + (player.hasBow ? '  ·  X: freccia' : ''),20,canvas.height-14);
 
   // Attack cooldown
   if (player.attackCooldown > 0) {
@@ -1210,9 +1962,12 @@ function restartGame() {
     x:(MAP_W/2)*TS, y:(MAP_H/2)*TS,
     dir:'down', moving:false, animFrame:0, animTimer:0,
     attacking:false, attackTimer:0, attackCooldown:0, attackHit:new Set(),
-    hearts:3, invincible:0, coins:0,
+    hearts:3, invincible:0, coins:0, hasBow:false,
   });
   killCount=0; coins.length=0; particles.length=0; floatingTexts.length=0;
+  fireballs.length=0; arrows.length=0; dragonDefeated=false; dragon=null;
+  shopOpen=false;
+  gameScene='world'; transitionAlpha=0; transitionDir=0; sceneAfterFade=null;
   spawnGoblins(); spawnTrolls(); spawnCampfires();
   gameState='playing';
   GameAudio.fadeMusicIn();
@@ -1249,6 +2004,7 @@ function loop(ts){
 
 generateMap();
 placeVillage();
+placeCaveEntrance();
 spawnGoblins();
 spawnTrolls();
 spawnCampfires();
